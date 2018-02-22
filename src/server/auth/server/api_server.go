@@ -49,7 +49,7 @@ const (
 	// magicUser is a special, unrevokable cluster administrator. It's not
 	// possible to log in as magicUser, but pipelines with no owner are run as
 	// magicUser when auth is activated.
-	magicUser = `GZD4jKDGcirJyWQt6HtK4hhRD6faOofP1mng34xNZsI`
+	magicUser = `magic:GZD4jKDGcirJyWQt6HtK4hhRD6faOofP1mng34xNZsI`
 
 	// GithubPrefix is a prefix we prepend to Users in the 'tokens' collection
 	// and ACL Entries (i.e. all usernames that have been verified with GitHub)
@@ -244,6 +244,9 @@ func (a *apiServer) Activate(ctx context.Context, req *authclient.ActivateReques
 	// We don't want to actually log the request/response since they contain
 	// credentials.
 	defer func(start time.Time) { a.LogResp(nil, nil, retErr, time.Since(start)) }(time.Now())
+	if strings.HasPrefix(req.GithubUsername, GithubPrefix) || strings.HasPrefix(req.GithubUsername, PachydermRobotPrefix) {
+		return nil, fmt.Errorf("GithubUsername should not have a user type prefix; it must be a GitHub user")
+	}
 	if req.GithubUsername == magicUser {
 		return nil, fmt.Errorf("invalid user")
 	}
@@ -455,6 +458,7 @@ func (a *apiServer) ModifyAdmins(ctx context.Context, req *authclient.ModifyAdmi
 	if err := eg.Wait(); err != nil {
 		return nil, err
 	}
+	fmt.Printf(">>> Adding: %v\n>>> Removing: %v\n", canonicalizedToAdd, canonicalizedToRemove)
 	err = a.validateModifyAdminsRequest(canonicalizedToAdd, canonicalizedToRemove)
 	if err != nil {
 		return nil, err
@@ -483,6 +487,9 @@ func (a *apiServer) Authenticate(ctx context.Context, req *authclient.Authentica
 	defer func(start time.Time) { a.LogResp(nil, nil, retErr, time.Since(start)) }(time.Now())
 	if !a.isActivated() {
 		return nil, authclient.NotActivatedError{}
+	}
+	if strings.HasPrefix(req.GithubUsername, GithubPrefix) || strings.HasPrefix(req.GithubUsername, PachydermRobotPrefix) {
+		return nil, fmt.Errorf("GithubUsername should not have a user type prefix; it must be a GitHub user")
 	}
 	if req.GithubUsername == magicUser {
 		return nil, fmt.Errorf("invalid user")
@@ -538,6 +545,9 @@ func (a *apiServer) Authorize(ctx context.Context, req *authclient.AuthorizeRequ
 	}
 
 	// admins are always authorized
+	fmt.Printf(">>> user.Username: %v\n", user.Username)
+	fmt.Printf(">>> admins: %v\n", a.adminCache)
+	fmt.Printf(">>> a.isAdmin(%v): %v\n", user.Username, a.isAdmin(user.Username))
 	if a.isAdmin(user.Username) {
 		return &authclient.AuthorizeResponse{Authorized: true}, nil
 	}
@@ -818,14 +828,13 @@ func (a *apiServer) SetACL(ctx context.Context, req *authclient.SetACLRequest) (
 	for _, entry := range req.Entries {
 		user, scope := entry.Username, entry.Scope
 		eg.Go(func() error {
-			user, scope := user, scope
-			u, err := canonicalizeUsername(ctx, user)
+			user, err := canonicalizeUsername(ctx, user)
 			if err != nil {
 				return err
 			}
 			aclMu.Lock()
 			defer aclMu.Unlock()
-			newACL.Entries[u] = scope
+			newACL.Entries[user] = scope
 			return nil
 		})
 	}
@@ -875,6 +884,9 @@ func (a *apiServer) SetACL(ctx context.Context, req *authclient.SetACLRequest) (
 			}
 			_, err = pachClient.InspectRepo(req.Repo)
 			err = grpcutil.ScrubGRPC(err)
+			fmt.Printf(">>> InspectRepo error: %v\n", err)
+			fmt.Printf(">>> len(newACL.Entries): %d (should be 1)\n", len(newACL.Entries))
+			fmt.Printf(">>> newACL.Entries[\"%s\"]\n  = %v[\"%s\"]\n  = %s\n", user.Username, newACL.Entries, user.Username, newACL.Entries[user.Username])
 			if err == nil {
 				// Repo exists -- user isn't authorized
 				return false, nil
@@ -1041,34 +1053,37 @@ func (a *apiServer) getAuthenticatedUser(ctx context.Context) (*authclient.User,
 // canonicalizeUsername establishes what kind of user 'username' is by looking
 // for a one of pachyderm's user prefixes, and then canonicalizes the user based
 // on that
-func canonicalizeUsername(ctx context.Context, username string) (string, error) {
+func canonicalizeUsername(ctx context.Context, user string) (string, error) {
 	switch {
-	case strings.HasPrefix(username, GithubPrefix):
+	case strings.HasPrefix(user, GithubPrefix):
 		var err error
-		username, err = canonicalizeGitHubUsername(ctx, username)
+		user, err = canonicalizeGitHubUsername(ctx, user[len(GithubPrefix):])
 		if err != nil {
 			return "", err
 		}
-	case strings.HasPrefix(username, PachydermRobotPrefix):
+	case strings.HasPrefix(user, PachydermRobotPrefix):
 		break
 	default:
 		return "", fmt.Errorf("usernames must have one of the prefixes \"github:\" or \"pachyderm_robot:\"")
 	}
-	return username, nil
+	return user, nil
 }
 
-// canonicalizeGitHubUsername corrects 'username' for case errors by looking
+// canonicalizeGitHubUsername corrects 'user' for case errors by looking
 // up the corresponding user's GitHub profile and extracting their login ID
 // from that
-func canonicalizeGitHubUsername(ctx context.Context, username string) (string, error) {
+func canonicalizeGitHubUsername(ctx context.Context, user string) (string, error) {
+	if strings.HasPrefix(user, GithubPrefix) || strings.HasPrefix(user, PachydermRobotPrefix) {
+		return "", fmt.Errorf("invalid username has multiple prefixes: %s%s", GithubPrefix, user)
+	}
 	if os.Getenv(DisableAuthenticationEnvVar) == "true" {
-		// authentication is off -- username might not even be real
-		return GithubPrefix + username, nil
+		// authentication is off -- user might not even be real
+		return GithubPrefix + user, nil
 	}
 	gclient := github.NewClient(http.DefaultClient)
-	u, _, err := gclient.Users.Get(ctx, strings.ToLower(username))
+	u, _, err := gclient.Users.Get(ctx, strings.ToLower(user))
 	if err != nil {
-		return "", fmt.Errorf("error canonicalizing \"%s\": %v", username, err)
+		return "", fmt.Errorf("error canonicalizing \"%s\": %v", user, err)
 	}
 	return GithubPrefix + u.GetLogin(), nil
 }

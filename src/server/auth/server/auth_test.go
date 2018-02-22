@@ -29,9 +29,9 @@ var (
 
 // getPachClient creates a seed client with a grpc connection to a pachyderm
 // cluster, and then enable the auth service in that cluster
-func getPachClient(t testing.TB, u string) *client.APIClient {
+func getPachClient(t testing.TB, user string) *client.APIClient {
 	t.Helper()
-	// Check if "u" already has a client -- if not create one
+	// Check if 'user' already has a client -- if not create one
 	func() {
 		// Client creation is wrapped in an anonymous function to make locking and
 		// releasing clientMapMut easier, and keep concurrent tests from racing with
@@ -100,16 +100,18 @@ func getPachClient(t testing.TB, u string) *client.APIClient {
 		}, backoff.NewTestingBackOff()))
 
 		// Re-use old client for 'u', or create a new one if none exists
-		if _, ok := clientMap[u]; !ok {
+		if _, ok := clientMap[user]; !ok {
 			userClient := *clientMap[""]
 			resp, err := userClient.Authenticate(context.Background(),
-				&auth.AuthenticateRequest{GithubUsername: string(u)})
+				&auth.AuthenticateRequest{
+					GithubUsername: strings.TrimPrefix(user, GithubPrefix),
+				})
 			require.NoError(t, err)
 			userClient.SetAuthToken(resp.PachToken)
-			clientMap[u] = &userClient
+			clientMap[user] = &userClient
 		}
 	}()
-	return clientMap[u]
+	return clientMap[user]
 }
 
 // entries constructs an auth.ACL struct from a list of the form
@@ -129,9 +131,9 @@ func entries(items ...string) []auth.ACLEntry {
 			panic(fmt.Sprintf("could not parse scope: %v", err))
 		}
 		username := items[i]
-		if strings.Index(username, ":") < 0 {
-			username = GithubPrefix + username
-		}
+		// if strings.Index(username, ":") < 0 {
+		// 	username = GithubPrefix + username
+		// }
 		result = append(result, auth.ACLEntry{Username: username, Scope: scope})
 	}
 	return result
@@ -221,7 +223,7 @@ func TestActivate(t *testing.T) {
 	who, err := c.WhoAmI(c.Ctx(), &auth.WhoAmIRequest{})
 	require.NoError(t, err)
 	require.True(t, who.IsAdmin)
-	require.Equal(t, "admin", who.Username)
+	require.Equal(t, admin, who.Username)
 }
 
 // TestGetSetBasic creates two users, alice and bob, and gives bob gradually
@@ -231,7 +233,7 @@ func TestGetSetBasic(t *testing.T) {
 		t.Skip("Skipping integration tests in short mode")
 	}
 	t.Parallel()
-	alice, bob := tu.UniqueString("alice"), tu.UniqueString("bob")
+	alice, bob := GithubPrefix+tu.UniqueString("alice"), GithubPrefix+tu.UniqueString("bob")
 	aliceClient, bobClient := getPachClient(t, alice), getPachClient(t, bob)
 
 	// create repo, and check that alice is the owner of the new repo
@@ -264,7 +266,7 @@ func TestGetSetBasic(t *testing.T) {
 	// bob can't update the ACL
 	_, err = bobClient.SetScope(bobClient.Ctx(), &auth.SetScopeRequest{
 		Repo:     dataRepo,
-		Username: "carol",
+		Username: carol,
 		Scope:    auth.Scope_READER,
 	})
 	require.YesError(t, err)
@@ -293,7 +295,7 @@ func TestGetSetBasic(t *testing.T) {
 	// bob can't update the ACL
 	_, err = bobClient.SetScope(bobClient.Ctx(), &auth.SetScopeRequest{
 		Repo:     dataRepo,
-		Username: "carol",
+		Username: carol,
 		Scope:    auth.Scope_READER,
 	})
 	require.YesError(t, err)
@@ -322,7 +324,7 @@ func TestGetSetBasic(t *testing.T) {
 	// bob can't update the ACL
 	_, err = bobClient.SetScope(bobClient.Ctx(), &auth.SetScopeRequest{
 		Repo:     dataRepo,
-		Username: "carol",
+		Username: carol,
 		Scope:    auth.Scope_READER,
 	})
 	require.YesError(t, err)
@@ -351,13 +353,13 @@ func TestGetSetBasic(t *testing.T) {
 	// bob can update the ACL
 	_, err = bobClient.SetScope(bobClient.Ctx(), &auth.SetScopeRequest{
 		Repo:     dataRepo,
-		Username: "carol",
+		Username: carol,
 		Scope:    auth.Scope_READER,
 	})
 	require.NoError(t, err)
 	// check that ACL was updated)
 	require.ElementsEqual(t,
-		entries(alice, "owner", bob, "owner", "carol", "reader"),
+		entries(alice, "owner", bob, "owner", carol, "reader"),
 		GetACL(t, aliceClient, dataRepo))
 }
 
@@ -368,7 +370,7 @@ func TestGetSetReverse(t *testing.T) {
 		t.Skip("Skipping integration tests in short mode")
 	}
 	t.Parallel()
-	alice, bob := tu.UniqueString("alice"), tu.UniqueString("bob")
+	alice, bob := GithubPrefix+tu.UniqueString("alice"), GithubPrefix+tu.UniqueString("bob")
 	aliceClient, bobClient := getPachClient(t, alice), getPachClient(t, bob)
 
 	// create repo, and check that alice is the owner of the new repo
@@ -407,19 +409,19 @@ func TestGetSetReverse(t *testing.T) {
 	// bob can update the ACL
 	_, err = bobClient.SetScope(bobClient.Ctx(), &auth.SetScopeRequest{
 		Repo:     dataRepo,
-		Username: "carol",
+		Username: carol,
 		Scope:    auth.Scope_READER,
 	})
 	require.NoError(t, err)
 	// check that ACL was updated)
 	require.ElementsEqual(t,
-		entries(alice, "owner", bob, "owner", "carol", "reader"),
+		entries(alice, "owner", bob, "owner", carol, "reader"),
 		GetACL(t, aliceClient, dataRepo))
 
 	// clear carol
 	aliceClient.SetScope(aliceClient.Ctx(), &auth.SetScopeRequest{
 		Repo:     dataRepo,
-		Username: "carol",
+		Username: carol,
 		Scope:    auth.Scope_NONE,
 	})
 	require.ElementsEqual(t,
@@ -445,7 +447,7 @@ func TestGetSetReverse(t *testing.T) {
 	// bob can't update the ACL
 	_, err = bobClient.SetScope(bobClient.Ctx(), &auth.SetScopeRequest{
 		Repo:     dataRepo,
-		Username: "carol",
+		Username: carol,
 		Scope:    auth.Scope_READER,
 	})
 	require.YesError(t, err)
@@ -474,7 +476,7 @@ func TestGetSetReverse(t *testing.T) {
 	// bob can't update the ACL
 	_, err = bobClient.SetScope(bobClient.Ctx(), &auth.SetScopeRequest{
 		Repo:     dataRepo,
-		Username: "carol",
+		Username: carol,
 		Scope:    auth.Scope_READER,
 	})
 	require.YesError(t, err)
@@ -503,7 +505,7 @@ func TestGetSetReverse(t *testing.T) {
 	// bob can't update the ACL
 	_, err = bobClient.SetScope(bobClient.Ctx(), &auth.SetScopeRequest{
 		Repo:     dataRepo,
-		Username: "carol",
+		Username: carol,
 		Scope:    auth.Scope_READER,
 	})
 	require.YesError(t, err)
@@ -535,7 +537,7 @@ func TestCreateAndUpdatePipeline(t *testing.T) {
 			args.update,
 		)
 	}
-	alice, bob := tu.UniqueString("alice"), tu.UniqueString("bob")
+	alice, bob := GithubPrefix+tu.UniqueString("alice"), GithubPrefix+tu.UniqueString("bob")
 	aliceClient, bobClient := getPachClient(t, alice), getPachClient(t, bob)
 
 	// create repo, and check that alice is the owner of the new repo
@@ -736,7 +738,7 @@ func TestPipelineMultipleInputs(t *testing.T) {
 			args.update,
 		)
 	}
-	alice, bob := tu.UniqueString("alice"), tu.UniqueString("bob")
+	alice, bob := GithubPrefix+tu.UniqueString("alice"), GithubPrefix+tu.UniqueString("bob")
 	aliceClient, bobClient := getPachClient(t, alice), getPachClient(t, bob)
 
 	// create two repos, and check that alice is the owner of the new repos
@@ -908,7 +910,7 @@ func TestPipelineRevoke(t *testing.T) {
 		t.Skip("Skipping integration tests in short mode")
 	}
 	t.Parallel()
-	alice, bob := tu.UniqueString("alice"), tu.UniqueString("bob")
+	alice, bob := GithubPrefix+tu.UniqueString("alice"), GithubPrefix+tu.UniqueString("bob")
 	aliceClient, bobClient := getPachClient(t, alice), getPachClient(t, bob)
 
 	// alice creates a repo, and adds bob as a reader
@@ -1038,7 +1040,7 @@ func TestStopAndDeletePipeline(t *testing.T) {
 		t.Skip("Skipping integration tests in short mode")
 	}
 	t.Parallel()
-	alice, bob := tu.UniqueString("alice"), tu.UniqueString("bob")
+	alice, bob := GithubPrefix+tu.UniqueString("alice"), GithubPrefix+tu.UniqueString("bob")
 	aliceClient, bobClient := getPachClient(t, alice), getPachClient(t, bob)
 
 	// alice creates a repo
@@ -1196,7 +1198,7 @@ func TestListAndInspectRepo(t *testing.T) {
 		t.Skip("Skipping integration tests in short mode")
 	}
 	t.Parallel()
-	alice, bob := tu.UniqueString("alice"), tu.UniqueString("bob")
+	alice, bob := GithubPrefix+tu.UniqueString("alice"), GithubPrefix+tu.UniqueString("bob")
 	aliceClient, bobClient := getPachClient(t, alice), getPachClient(t, bob)
 
 	// alice creates a repo and makes Bob a writer
@@ -1264,7 +1266,7 @@ func TestUnprivilegedUserCannotMakeSelfOwner(t *testing.T) {
 		t.Skip("Skipping integration tests in short mode")
 	}
 	t.Parallel()
-	alice, bob := tu.UniqueString("alice"), tu.UniqueString("bob")
+	alice, bob := GithubPrefix+tu.UniqueString("alice"), GithubPrefix+tu.UniqueString("bob")
 	aliceClient, bobClient := getPachClient(t, alice), getPachClient(t, bob)
 
 	// alice creates a repo
@@ -1289,7 +1291,7 @@ func TestGetScopeRequiresReader(t *testing.T) {
 		t.Skip("Skipping integration tests in short mode")
 	}
 	t.Parallel()
-	alice, bob := tu.UniqueString("alice"), tu.UniqueString("bob")
+	alice, bob := GithubPrefix+tu.UniqueString("alice"), GithubPrefix+tu.UniqueString("bob")
 	aliceClient, bobClient := getPachClient(t, alice), getPachClient(t, bob)
 
 	// alice creates a repo
@@ -1322,7 +1324,7 @@ func TestListRepoNotLoggedInError(t *testing.T) {
 		t.Skip("Skipping integration tests in short mode")
 	}
 	t.Parallel()
-	alice := tu.UniqueString("alice")
+	alice := GithubPrefix + tu.UniqueString("alice")
 	aliceClient, anonClient := getPachClient(t, alice), getPachClient(t, "")
 
 	// alice creates a repo
@@ -1346,7 +1348,7 @@ func TestListRepoNoAuthInfoIfDeactivated(t *testing.T) {
 	}
 	// Dont't run this test in parallel, since it deactivates the auth system
 	// globally, so any tests running concurrently will fail
-	alice, bob := tu.UniqueString("alice"), tu.UniqueString("bob")
+	alice, bob := GithubPrefix+tu.UniqueString("alice"), GithubPrefix+tu.UniqueString("bob")
 	aliceClient, bobClient := getPachClient(t, alice), getPachClient(t, bob)
 	adminClient := getPachClient(t, "admin")
 
@@ -1390,7 +1392,7 @@ func TestCreateRepoAlreadyExistsError(t *testing.T) {
 		t.Skip("Skipping integration tests in short mode")
 	}
 	t.Parallel()
-	alice, bob := tu.UniqueString("alice"), tu.UniqueString("bob")
+	alice, bob := GithubPrefix+tu.UniqueString("alice"), GithubPrefix+tu.UniqueString("bob")
 	aliceClient, bobClient := getPachClient(t, alice), getPachClient(t, bob)
 
 	// alice creates a repo
@@ -1412,7 +1414,7 @@ func TestDeleteRepoDoesntExistError(t *testing.T) {
 		t.Skip("Skipping integration tests in short mode")
 	}
 	t.Parallel()
-	alice := tu.UniqueString("alice")
+	alice := GithubPrefix + tu.UniqueString("alice")
 	aliceClient := getPachClient(t, alice)
 
 	err := aliceClient.DeleteRepo("dOeSnOtExIsT", false)
@@ -1432,7 +1434,7 @@ func TestCreatePipelineRepoAlreadyExistsError(t *testing.T) {
 		t.Skip("Skipping integration tests in short mode")
 	}
 	t.Parallel()
-	alice, bob := tu.UniqueString("alice"), tu.UniqueString("bob")
+	alice, bob := GithubPrefix+tu.UniqueString("alice"), GithubPrefix+tu.UniqueString("bob")
 	aliceClient, bobClient := getPachClient(t, alice), getPachClient(t, bob)
 
 	// alice creates a repo
@@ -1488,7 +1490,7 @@ func TestAuthorizedNoneRole(t *testing.T) {
 	require.NoError(t, adminClient.CreateRepo(repo))
 
 	// Get new pach clients, re-activating auth
-	alice := tu.UniqueString("alice")
+	alice := GithubPrefix + tu.UniqueString("alice")
 	aliceClient, adminClient := getPachClient(t, alice), getPachClient(t, "admin")
 
 	// Check that the repo has no ACL
@@ -1508,7 +1510,7 @@ func TestDeleteAll(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration tests in short mode")
 	}
-	alice := tu.UniqueString("alice")
+	alice := GithubPrefix + tu.UniqueString("alice")
 	aliceClient, adminClient := getPachClient(t, alice), getPachClient(t, "admin")
 
 	// alice creates a repo
@@ -1530,7 +1532,7 @@ func TestListDatum(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration tests in short mode")
 	}
-	alice, bob := tu.UniqueString("alice"), tu.UniqueString("bob")
+	alice, bob := GithubPrefix+tu.UniqueString("alice"), GithubPrefix+tu.UniqueString("bob")
 	aliceClient, bobClient := getPachClient(t, alice), getPachClient(t, bob)
 
 	// alice creates a repo
@@ -1653,7 +1655,7 @@ func TestInspectDatum(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration tests in short mode")
 	}
-	alice := tu.UniqueString("alice")
+	alice := GithubPrefix + tu.UniqueString("alice")
 	aliceClient := getPachClient(t, alice)
 
 	// alice creates a repo
@@ -1718,7 +1720,7 @@ func TestGetLogs(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration tests in short mode")
 	}
-	alice, bob := tu.UniqueString("alice"), tu.UniqueString("bob")
+	alice, bob := GithubPrefix+tu.UniqueString("alice"), GithubPrefix+tu.UniqueString("bob")
 	aliceClient, bobClient := getPachClient(t, alice), getPachClient(t, bob)
 
 	// alice creates a repo
@@ -1816,7 +1818,7 @@ func TestGetLogsFromStats(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration tests in short mode")
 	}
-	alice := tu.UniqueString("alice")
+	alice := GithubPrefix + tu.UniqueString("alice")
 	aliceClient := getPachClient(t, alice)
 
 	// alice creates a repo

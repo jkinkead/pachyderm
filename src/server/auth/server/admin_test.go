@@ -31,20 +31,23 @@ func TSProtoOrDie(t *testing.T, ts time.Time) *types.Timestamp {
 	return proto
 }
 
+const admin = GithubPrefix + "admin"
+const carol = GithubPrefix + "carol"
+
 // TestAdminRWO tests adding and removing cluster admins, as well as admins
 // reading, writing, and moderating (owning) all repos in the cluster.
 func TestAdminRWO(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration tests in short mode")
 	}
-	alice, bob := tu.UniqueString("alice"), tu.UniqueString("bob")
+	alice, bob := GithubPrefix+tu.UniqueString("alice"), GithubPrefix+tu.UniqueString("bob")
 	aliceClient, bobClient := getPachClient(t, alice), getPachClient(t, bob)
-	adminClient := getPachClient(t, "admin")
+	adminClient := getPachClient(t, admin)
 
-	// The initial set of admins is just the user "admin"
+	// The initial set of admins is just the user admin
 	resp, err := aliceClient.GetAdmins(aliceClient.Ctx(), &auth.GetAdminsRequest{})
 	require.NoError(t, err)
-	require.ElementsEqual(t, []string{"admin"}, resp.Admins)
+	require.ElementsEqual(t, []string{admin}, resp.Admins)
 
 	// alice creates a repo (that only she owns) and puts a file
 	repo := tu.UniqueString("TestAdminRWO")
@@ -74,7 +77,7 @@ func TestAdminRWO(t *testing.T) {
 	// bob can't update the ACL
 	_, err = bobClient.SetScope(bobClient.Ctx(), &auth.SetScopeRequest{
 		Repo:     repo,
-		Username: "carol",
+		Username: carol,
 		Scope:    auth.Scope_READER,
 	})
 	require.YesError(t, err)
@@ -90,7 +93,9 @@ func TestAdminRWO(t *testing.T) {
 	require.NoError(t, backoff.Retry(func() error {
 		resp, err := aliceClient.GetAdmins(aliceClient.Ctx(), &auth.GetAdminsRequest{})
 		require.NoError(t, err)
-		return require.ElementsEqualOrErr([]string{"admin", bob}, resp.Admins)
+		return require.ElementsEqualOrErr(
+			[]string{admin, bob}, resp.Admins,
+		)
 	}, backoff.NewTestingBackOff()))
 
 	// now bob can read from the repo
@@ -107,13 +112,13 @@ func TestAdminRWO(t *testing.T) {
 	// bob can update the repo's ACL
 	_, err = bobClient.SetScope(bobClient.Ctx(), &auth.SetScopeRequest{
 		Repo:     repo,
-		Username: "carol",
+		Username: carol,
 		Scope:    auth.Scope_READER,
 	})
 	require.NoError(t, err)
 	// check that ACL was updated
 	require.ElementsEqual(t,
-		entries(alice, "owner", "carol", "reader"), GetACL(t, aliceClient, repo))
+		entries(alice, "owner", carol, "reader"), GetACL(t, aliceClient, repo))
 
 	// 'admin' revokes bob's admin status
 	_, err = adminClient.ModifyAdmins(adminClient.Ctx(),
@@ -124,7 +129,7 @@ func TestAdminRWO(t *testing.T) {
 	backoff.Retry(func() error {
 		resp, err := aliceClient.GetAdmins(aliceClient.Ctx(), &auth.GetAdminsRequest{})
 		require.NoError(t, err)
-		return require.ElementsEqualOrErr([]string{"admin"}, resp.Admins)
+		return require.ElementsEqualOrErr([]string{admin}, resp.Admins)
 	}, backoff.NewTestingBackOff())
 
 	// bob can no longer read from the repo
@@ -142,22 +147,22 @@ func TestAdminRWO(t *testing.T) {
 	// bob can't update the ACL
 	_, err = bobClient.SetScope(bobClient.Ctx(), &auth.SetScopeRequest{
 		Repo:     repo,
-		Username: "carol",
+		Username: carol,
 		Scope:    auth.Scope_WRITER,
 	})
 	require.YesError(t, err)
 	require.Matches(t, "not authorized", err.Error())
 	// check that ACL wasn't updated
 	require.ElementsEqual(t,
-		entries(alice, "owner", "carol", "reader"), GetACL(t, aliceClient, repo))
+		entries(alice, "owner", carol, "reader"), GetACL(t, aliceClient, repo))
 }
 
 func TestAdminFixBrokenRepo(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration tests in short mode")
 	}
-	alice := tu.UniqueString("alice")
-	aliceClient, adminClient := getPachClient(t, alice), getPachClient(t, "admin")
+	alice := GithubPrefix + tu.UniqueString("alice")
+	aliceClient, adminClient := getPachClient(t, alice), getPachClient(t, admin)
 
 	// alice creates a repo (that only she owns) and puts a file
 	repo := tu.UniqueString("TestAdmin")
@@ -206,23 +211,23 @@ func TestCannotRemoveAllClusterAdmins(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration tests in short mode")
 	}
-	alice := tu.UniqueString("alice")
-	aliceClient, adminClient := getPachClient(t, alice), getPachClient(t, "admin")
+	alice := GithubPrefix + tu.UniqueString("alice")
+	aliceClient, adminClient := getPachClient(t, alice), getPachClient(t, admin)
 
-	// Check that the initial set of admins is just "admin"
+	// Check that the initial set of admins is just admin
 	resp, err := adminClient.GetAdmins(adminClient.Ctx(), &auth.GetAdminsRequest{})
 	require.NoError(t, err)
-	require.ElementsEqual(t, []string{"admin"}, resp.Admins)
+	require.ElementsEqual(t, []string{admin}, resp.Admins)
 
 	// admin cannot remove themselves from the list of cluster admins (otherwise
 	// there would be no admins)
 	_, err = adminClient.ModifyAdmins(adminClient.Ctx(),
-		&auth.ModifyAdminsRequest{Remove: []string{"admin"}})
+		&auth.ModifyAdminsRequest{Remove: []string{admin}})
 	require.YesError(t, err)
 	require.NoError(t, backoff.Retry(func() error {
 		resp, err = adminClient.GetAdmins(adminClient.Ctx(), &auth.GetAdminsRequest{})
 		require.NoError(t, err)
-		return require.ElementsEqualOrErr([]string{"admin"}, resp.Admins)
+		return require.ElementsEqualOrErr([]string{admin}, resp.Admins)
 	}, backoff.NewTestingBackOff()))
 
 	// admin can make alice a cluster administrator
@@ -234,12 +239,12 @@ func TestCannotRemoveAllClusterAdmins(t *testing.T) {
 	require.NoError(t, backoff.Retry(func() error {
 		resp, err = adminClient.GetAdmins(adminClient.Ctx(), &auth.GetAdminsRequest{})
 		require.NoError(t, err)
-		return require.ElementsEqualOrErr([]string{"admin", alice}, resp.Admins)
+		return require.ElementsEqualOrErr([]string{admin, alice}, resp.Admins)
 	}, backoff.NewTestingBackOff()))
 
 	// Now admin can remove themselves as a cluster admin
 	_, err = adminClient.ModifyAdmins(adminClient.Ctx(),
-		&auth.ModifyAdminsRequest{Remove: []string{"admin"}})
+		&auth.ModifyAdminsRequest{Remove: []string{admin}})
 	require.NoError(t, err)
 	require.NoError(t, backoff.Retry(func() error {
 		resp, err = adminClient.GetAdmins(adminClient.Ctx(), &auth.GetAdminsRequest{})
@@ -258,17 +263,17 @@ func TestCannotRemoveAllClusterAdmins(t *testing.T) {
 		return require.ElementsEqualOrErr([]string{alice}, resp.Admins)
 	}, backoff.NewTestingBackOff()))
 
-	// alice *can* swap herself and "admin"
+	// alice *can* swap herself and admin
 	_, err = aliceClient.ModifyAdmins(aliceClient.Ctx(),
 		&auth.ModifyAdminsRequest{
-			Add:    []string{"admin"},
+			Add:    []string{admin},
 			Remove: []string{alice},
 		})
 	require.NoError(t, err)
 	require.NoError(t, backoff.Retry(func() error {
 		resp, err = adminClient.GetAdmins(adminClient.Ctx(), &auth.GetAdminsRequest{})
 		require.NoError(t, err)
-		return require.ElementsEqualOrErr([]string{"admin"}, resp.Admins)
+		return require.ElementsEqualOrErr([]string{admin}, resp.Admins)
 	}, backoff.NewTestingBackOff()))
 }
 
@@ -276,8 +281,8 @@ func TestPreActivationPipelinesRunAsAdmin(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration tests in short mode")
 	}
-	alice := tu.UniqueString("alice")
-	aliceClient, adminClient := getPachClient(t, alice), getPachClient(t, "admin")
+	alice := GithubPrefix + tu.UniqueString("alice")
+	aliceClient, adminClient := getPachClient(t, alice), getPachClient(t, admin)
 
 	// Deactivate auth
 	_, err := adminClient.Deactivate(adminClient.Ctx(), &auth.DeactivateRequest{})
@@ -327,7 +332,7 @@ func TestPreActivationPipelinesRunAsAdmin(t *testing.T) {
 
 	// activate auth
 	_, err = adminClient.Activate(adminClient.Ctx(), &auth.ActivateRequest{
-		GithubUsername: "admin",
+		GithubUsername: strings.TrimPrefix(admin, GithubPrefix),
 	})
 	require.NoError(t, err)
 
@@ -335,10 +340,10 @@ func TestPreActivationPipelinesRunAsAdmin(t *testing.T) {
 	require.NoError(t, backoff.Retry(func() error {
 		for i := 0; i < 2; i++ {
 			client := []*client.APIClient{adminClient, aliceClient}[i]
-			username := []string{"admin", alice}[i]
+			username := []string{admin, alice}[i]
 			resp, err := client.Authenticate(context.Background(),
 				&auth.AuthenticateRequest{
-					GithubUsername: username,
+					GithubUsername: strings.TrimPrefix(username, GithubPrefix),
 				})
 			if err != nil {
 				return err
@@ -378,8 +383,8 @@ func TestExpirationRepoOnlyAccessibleToAdmins(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration tests in short mode")
 	}
-	alice := tu.UniqueString("alice")
-	aliceClient, adminClient := getPachClient(t, alice), getPachClient(t, "admin")
+	alice := GithubPrefix + tu.UniqueString("alice")
+	aliceClient, adminClient := getPachClient(t, alice), getPachClient(t, admin)
 
 	// alice creates a repo
 	repo := tu.UniqueString("TestExpirationRepoOnlyAccessibleToAdmins")
@@ -427,7 +432,7 @@ func TestExpirationRepoOnlyAccessibleToAdmins(t *testing.T) {
 	// alice can't update the ACL
 	_, err = aliceClient.SetScope(aliceClient.Ctx(), &auth.SetScopeRequest{
 		Repo:     repo,
-		Username: "carol",
+		Username: carol,
 		Scope:    auth.Scope_READER,
 	})
 	require.YesError(t, err)
@@ -437,7 +442,7 @@ func TestExpirationRepoOnlyAccessibleToAdmins(t *testing.T) {
 
 	// alice also can't re-authenticate
 	_, err = aliceClient.Authenticate(context.Background(),
-		&auth.AuthenticateRequest{GithubUsername: alice})
+		&auth.AuthenticateRequest{GithubUsername: strings.TrimPrefix(alice, GithubPrefix)})
 	require.YesError(t, err)
 	require.Matches(t, "not active", err.Error())
 
@@ -456,17 +461,17 @@ func TestExpirationRepoOnlyAccessibleToAdmins(t *testing.T) {
 	// admin can update the repo's ACL
 	_, err = adminClient.SetScope(adminClient.Ctx(), &auth.SetScopeRequest{
 		Repo:     repo,
-		Username: "carol",
+		Username: carol,
 		Scope:    auth.Scope_READER,
 	})
 	require.NoError(t, err)
 	// check that ACL was updated
 	require.ElementsEqual(t,
-		entries(alice, "owner", "carol", "reader"), GetACL(t, adminClient, repo))
+		entries(alice, "owner", carol, "reader"), GetACL(t, adminClient, repo))
 
 	// admin can re-authenticate
 	resp, err := adminClient.Authenticate(context.Background(),
-		&auth.AuthenticateRequest{GithubUsername: "admin"})
+		&auth.AuthenticateRequest{GithubUsername: strings.TrimPrefix(admin, GithubPrefix)})
 	require.NoError(t, err)
 	adminClient.SetAuthToken(resp.PachToken)
 
@@ -493,7 +498,7 @@ func TestExpirationRepoOnlyAccessibleToAdmins(t *testing.T) {
 
 	// alice can now re-authenticate
 	resp, err = aliceClient.Authenticate(context.Background(),
-		&auth.AuthenticateRequest{GithubUsername: alice})
+		&auth.AuthenticateRequest{GithubUsername: strings.TrimPrefix(alice, GithubPrefix)})
 	require.NoError(t, err)
 	aliceClient.SetAuthToken(resp.PachToken)
 
@@ -513,21 +518,21 @@ func TestExpirationRepoOnlyAccessibleToAdmins(t *testing.T) {
 	// alice can update the ACL again
 	_, err = aliceClient.SetScope(aliceClient.Ctx(), &auth.SetScopeRequest{
 		Repo:     repo,
-		Username: "carol",
+		Username: carol,
 		Scope:    auth.Scope_WRITER,
 	})
 	require.NoError(t, err)
 	// check that ACL was updated
 	require.ElementsEqual(t,
-		entries(alice, "owner", "carol", "writer"), GetACL(t, adminClient, repo))
+		entries(alice, "owner", carol, "writer"), GetACL(t, adminClient, repo))
 }
 
 func TestPipelinesRunAfterExpiration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration tests in short mode")
 	}
-	alice := tu.UniqueString("alice")
-	aliceClient, adminClient := getPachClient(t, alice), getPachClient(t, "admin")
+	alice := GithubPrefix + tu.UniqueString("alice")
+	aliceClient, adminClient := getPachClient(t, alice), getPachClient(t, admin)
 
 	// alice creates a repo
 	repo := tu.UniqueString("TestPipelinesRunAfterExpiration")
@@ -610,8 +615,8 @@ func TestGetSetScopeAndAclWithExpiredToken(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration tests in short mode")
 	}
-	alice := tu.UniqueString("alice")
-	aliceClient, adminClient := getPachClient(t, alice), getPachClient(t, "admin")
+	alice := GithubPrefix + tu.UniqueString("alice")
+	aliceClient, adminClient := getPachClient(t, alice), getPachClient(t, admin)
 
 	// alice creates a repo
 	repo := tu.UniqueString("TestGetSetScopeAndAclWithExpiredToken")
@@ -647,7 +652,7 @@ func TestGetSetScopeAndAclWithExpiredToken(t *testing.T) {
 	// alice can't call SetScope on repo
 	_, err = aliceClient.SetScope(aliceClient.Ctx(), &auth.SetScopeRequest{
 		Repo:     repo,
-		Username: "carol",
+		Username: carol,
 		Scope:    auth.Scope_READER,
 	})
 	require.YesError(t, err)
@@ -666,7 +671,7 @@ func TestGetSetScopeAndAclWithExpiredToken(t *testing.T) {
 		Repo: repo,
 		Entries: []*auth.ACLEntry{
 			{alice, auth.Scope_OWNER},
-			{"carol", auth.Scope_READER},
+			{carol, auth.Scope_READER},
 		},
 	})
 	require.YesError(t, err)
@@ -683,12 +688,12 @@ func TestGetSetScopeAndAclWithExpiredToken(t *testing.T) {
 	// admin can call SetScope on repo
 	_, err = adminClient.SetScope(adminClient.Ctx(), &auth.SetScopeRequest{
 		Repo:     repo,
-		Username: "carol",
+		Username: carol,
 		Scope:    auth.Scope_READER,
 	})
 	require.NoError(t, err)
 	require.ElementsEqual(t,
-		entries(alice, "owner", "carol", "reader"), GetACL(t, adminClient, repo))
+		entries(alice, "owner", carol, "reader"), GetACL(t, adminClient, repo))
 
 	// admin can call GetAcl on repo
 	aclResp, err := adminClient.GetACL(adminClient.Ctx(), &auth.GetACLRequest{
@@ -696,19 +701,19 @@ func TestGetSetScopeAndAclWithExpiredToken(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.ElementsEqual(t,
-		entries(alice, "owner", "carol", "reader"), aclResp.Entries)
+		entries(alice, "owner", carol, "reader"), aclResp.Entries)
 
 	// admin can call SetAcl on repo
 	_, err = adminClient.SetACL(adminClient.Ctx(), &auth.SetACLRequest{
 		Repo: repo,
 		Entries: []*auth.ACLEntry{
 			{alice, auth.Scope_OWNER},
-			{"carol", auth.Scope_WRITER},
+			{carol, auth.Scope_WRITER},
 		},
 	})
 	require.NoError(t, err)
 	require.ElementsEqual(t,
-		entries(alice, "owner", "carol", "writer"), GetACL(t, adminClient, repo))
+		entries(alice, "owner", carol, "writer"), GetACL(t, adminClient, repo))
 }
 
 // TestAdminWhoAmI tests that when an admin calls WhoAmI(), the IsAdmin field
@@ -717,8 +722,8 @@ func TestAdminWhoAmI(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration tests in short mode")
 	}
-	alice := tu.UniqueString("alice")
-	aliceClient, adminClient := getPachClient(t, alice), getPachClient(t, "admin")
+	alice := GithubPrefix + tu.UniqueString("alice")
+	aliceClient, adminClient := getPachClient(t, alice), getPachClient(t, admin)
 
 	// Make sure admin WhoAmI indicates that they're an admin, and non-admin
 	// WhoAmI indicates that they're not
@@ -728,7 +733,7 @@ func TestAdminWhoAmI(t *testing.T) {
 	require.False(t, resp.IsAdmin)
 	resp, err = adminClient.WhoAmI(adminClient.Ctx(), &auth.WhoAmIRequest{})
 	require.NoError(t, err)
-	require.Equal(t, "admin", resp.Username)
+	require.Equal(t, admin, resp.Username)
 	require.True(t, resp.IsAdmin)
 }
 
@@ -742,7 +747,7 @@ func TestListRepoAdminIsOwnerOfAllRepos(t *testing.T) {
 	t.Parallel()
 	alice, bob := tu.UniqueString("alice"), tu.UniqueString("bob")
 	aliceClient, bobClient := getPachClient(t, alice), getPachClient(t, bob)
-	adminClient := getPachClient(t, "admin")
+	adminClient := getPachClient(t, admin)
 
 	// alice creates a repo
 	repoWriter := tu.UniqueString("TestListRepoAdminIsOwnerOfAllRepos")
@@ -769,7 +774,7 @@ func TestGetCapability(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration tests in short mode")
 	}
-	adminClient := getPachClient(t, "admin")
+	adminClient := getPachClient(t, admin)
 
 	// Generate two auth credentials, and give them to two separate clients
 	robotUser := PachydermRobotPrefix + tu.UniqueString("optimus_prime")
