@@ -19,7 +19,7 @@ var (
 	// AdditionalVersion is the string provided at release time
 	// The value is passed to the linker at build time
 	// DO NOT set the value of this variable here
-	AdditionalVersion = "rc1"
+	AdditionalVersion string
 	// Version is the current version for pachyderm.
 	Version = &pb.Version{
 		Major:      MajorVersion,
@@ -30,7 +30,8 @@ var (
 )
 
 // PrettyPrintVersion returns a version string optionally tagged with metadata.
-// For example: "1.2.3", or "1.2.3rc1" if version.Additional is "rc1".
+// For example: "1.2.3", or "1.2.3rc1" if version.Additional is set by the
+// linker (in our Makefile) to "rc1".
 func PrettyPrintVersion(version *pb.Version) string {
 	result := PrettyPrintVersionNoAdditional(version)
 	if version.Additional != "" {

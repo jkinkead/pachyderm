@@ -150,7 +150,9 @@ message SetACLResponse {}
 
 //// Capability-token API (very limited -- for pipelines)
 
-message GetCapabilityRequest {}
+message GetCapabilityRequest {
+  string user = 1;
+}
 
 message GetCapabilityResponse {
   string capability = 1;

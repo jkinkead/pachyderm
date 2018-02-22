@@ -762,3 +762,87 @@ func TestListRepoAdminIsOwnerOfAllRepos(t *testing.T) {
 		require.Equal(t, auth.Scope_OWNER, info.AuthInfo.AccessLevel)
 	}
 }
+
+// TestGetCapability tests that an admin can manufacture auth credentials for
+// arbitrary other users
+func TestGetCapability(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+	adminClient := getPachClient(t, "admin")
+
+	// Generate two auth credentials, and give them to two separate clients
+	robotUser := PachydermRobotPrefix + tu.UniqueString("optimus_prime")
+	resp, err := adminClient.GetCapability(context.Background(),
+		&auth.GetCapabilityRequest{robotUser})
+	require.NoError(t, err)
+	user1 := adminClient.WithCtx(context.Background()) // copy client
+	user1.SetAuthToken(resp.Capability)
+
+	token1 := resp.Capability
+	resp, err = adminClient.GetCapability(context.Background(),
+		&auth.GetCapabilityRequest{robotUser})
+	require.NoError(t, err)
+	require.NotEqual(t, token1, resp.Capability)
+	user2 := adminClient.WithCtx(context.Background()) // copy client
+	user2.SetAuthToken(resp.Capability)
+
+	// user1 creates a repo
+	repo := tu.UniqueString("TestPipelinesRunAfterExpiration")
+	require.NoError(t, user1.CreateRepo(repo))
+	require.Equal(t, entries(robotUser, "owner"), GetACL(t, user1, repo))
+
+	// user1 creates a pipeline
+	pipeline := tu.UniqueString("optimus-prime-line")
+	require.NoError(t, user1.CreatePipeline(
+		pipeline,
+		"", // default image: ubuntu:14.04
+		[]string{"bash"},
+		[]string{fmt.Sprintf("cp /pfs/%s/* /pfs/out/", repo)},
+		&pps.ParallelismSpec{Constant: 1},
+		client.NewAtomInput(repo, "/*"),
+		"",    // default output branch: master
+		false, // no update
+	))
+	require.OneOfEquals(t, pipeline, PipelineNames(t, user1))
+	require.Equal(t, entries(robotUser, "owner"), GetACL(t, user1, pipeline)) // check that robotUser owns the output repo
+
+	// Make sure that user2 can commit to the input repo and the pipeline runs
+	// successfully
+	commit, err := user2.StartCommit(repo, "master")
+	require.NoError(t, err)
+	_, err = user2.PutFile(repo, commit.ID, tu.UniqueString("/file1"),
+		strings.NewReader("test data"))
+	require.NoError(t, err)
+	require.NoError(t, user2.FinishCommit(repo, commit.ID))
+	iter, err := user2.FlushCommit(
+		[]*pfs.Commit{commit},
+		[]*pfs.Repo{{Name: pipeline}},
+	)
+	require.NoError(t, err)
+	require.NoErrorWithinT(t, 60*time.Second, func() error {
+		_, err := iter.Next()
+		return err
+	})
+
+	// Make sure user2 can update the pipeline, and it still runs successfully
+	require.NoError(t, user1.CreatePipeline(
+		pipeline,
+		"", // default image: ubuntu:14.04
+		[]string{"bash"},
+		[]string{fmt.Sprintf("cp /pfs/%s/* /pfs/out/", repo)},
+		&pps.ParallelismSpec{Constant: 1},
+		client.NewAtomInput(repo, "/*"),
+		"",   // default output branch: master
+		true, // update
+	))
+	iter, err = user2.FlushCommit(
+		[]*pfs.Commit{commit},
+		[]*pfs.Repo{{Name: pipeline}},
+	)
+	require.NoError(t, err)
+	require.NoErrorWithinT(t, 60*time.Second, func() error {
+		_, err := iter.Next()
+		return err
+	})
+}

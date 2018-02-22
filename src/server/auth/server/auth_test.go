@@ -113,7 +113,8 @@ func getPachClient(t testing.TB, u string) *client.APIClient {
 }
 
 // entries constructs an auth.ACL struct from a list of the form
-// [ user_1, scope_1, user_2, scope_2, ... ]
+// [ user_1, scope_1, user_2, scope_2, ... ]. All users are assumed to be github
+// users
 func entries(items ...string) []auth.ACLEntry {
 	if len(items)%2 != 0 {
 		panic("cannot create an ACL from an odd number of items")
@@ -127,7 +128,11 @@ func entries(items ...string) []auth.ACLEntry {
 		if err != nil {
 			panic(fmt.Sprintf("could not parse scope: %v", err))
 		}
-		result = append(result, auth.ACLEntry{Username: items[i], Scope: scope})
+		username := items[i]
+		if strings.Index(username, ":") < 0 {
+			username = GithubPrefix + username
+		}
+		result = append(result, auth.ACLEntry{Username: username, Scope: scope})
 	}
 	return result
 }
