@@ -497,30 +497,26 @@ func PachdService(opts *AssetOpts) *v1.Service {
 		},
 		ObjectMeta: objectMeta(pachdName, labels(pachdName), prometheusAnnotations, opts.Namespace),
 		Spec: v1.ServiceSpec{
-			Type: v1.ServiceTypeNodePort,
+			Type: v1.ServiceTypeClusterIP,
 			Selector: map[string]string{
 				"app": pachdName,
 			},
 			Ports: []v1.ServicePort{
 				{
-					Port:     650,
-					Name:     "api-grpc-port",
-					NodePort: 30650,
+					Port: 650,
+					Name: "api-grpc-port",
 				},
 				{
-					Port:     651,
-					Name:     "trace-port",
-					NodePort: 30651,
+					Port: 651,
+					Name: "trace-port",
 				},
 				{
-					Port:     http.HTTPPort,
-					Name:     "api-http-port",
-					NodePort: 30000 + http.HTTPPort,
+					Port: http.HTTPPort,
+					Name: "api-http-port",
 				},
 				{
-					Port:     githook.GitHookPort,
-					Name:     "api-git-port",
-					NodePort: githook.NodePort(),
+					Port: githook.GitHookPort,
+					Name: "api-git-port",
 				},
 			},
 		},
@@ -764,13 +760,9 @@ func EtcdVolumeClaim(size int, opts *AssetOpts) *v1.PersistentVolumeClaim {
 	}
 }
 
-// EtcdNodePortService returns a NodePort etcd service. This will let non-etcd
+// EtcdClusterIPService returns a NodePort etcd service. This will let non-etcd
 // pods talk to etcd
-func EtcdNodePortService(local bool, opts *AssetOpts) *v1.Service {
-	var clientNodePort int32
-	if local {
-		clientNodePort = 32379
-	}
+func EtcdClusterIPService(local bool, opts *AssetOpts) *v1.Service {
 	return &v1.Service{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Service",
@@ -778,15 +770,14 @@ func EtcdNodePortService(local bool, opts *AssetOpts) *v1.Service {
 		},
 		ObjectMeta: objectMeta(etcdName, labels(etcdName), nil, opts.Namespace),
 		Spec: v1.ServiceSpec{
-			Type: v1.ServiceTypeNodePort,
+			Type: v1.ServiceTypeClusterIP,
 			Selector: map[string]string{
 				"app": etcdName,
 			},
 			Ports: []v1.ServicePort{
 				{
-					Port:     2379,
-					Name:     "client-port",
-					NodePort: clientNodePort,
+					Port: 2379,
+					Name: "client-port",
 				},
 			},
 		},
@@ -1040,18 +1031,16 @@ func DashService(opts *AssetOpts) *v1.Service {
 		},
 		ObjectMeta: objectMeta(dashName, labels(dashName), nil, opts.Namespace),
 		Spec: v1.ServiceSpec{
-			Type:     v1.ServiceTypeNodePort,
+			Type:     v1.ServiceTypeClusterIP,
 			Selector: labels(dashName),
 			Ports: []v1.ServicePort{
 				{
-					Port:     8080,
-					Name:     "dash-http",
-					NodePort: 30080,
+					Port: 8080,
+					Name: "dash-http",
 				},
 				{
-					Port:     8081,
-					Name:     "grpc-proxy-http",
-					NodePort: 30081,
+					Port: 8081,
+					Name: "grpc-proxy-http",
 				},
 			},
 		},
@@ -1269,7 +1258,7 @@ func WriteAssets(encoder Encoder, opts *AssetOpts, objectStoreBackend backend,
 	} else {
 		return fmt.Errorf("unless deploying locally, either --dynamic-etcd-nodes or --static-etcd-volume needs to be provided")
 	}
-	if err := encoder.Encode(EtcdNodePortService(objectStoreBackend == localBackend, opts)); err != nil {
+	if err := encoder.Encode(EtcdClusterIPService(objectStoreBackend == localBackend, opts)); err != nil {
 		return err
 	}
 
