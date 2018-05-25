@@ -154,6 +154,7 @@ func DeployCmd(noMetrics *bool) *cobra.Command {
 	var dashOnly bool
 	var noDash bool
 	var dashImage string
+	var pachydermVersion string
 	var registry string
 	var imagePullSecret string
 	var noGuaranteed bool
@@ -504,7 +505,7 @@ particular backend, run "pachctl deploy storage <backend>"`,
 			dashImage = getDefaultOrLatestDashImage(dashImage, dryRun)
 			opts = &assets.AssetOpts{
 				PachdShards:             uint64(pachdShards),
-				Version:                 version.PrettyPrintVersion(version.Version),
+				Version:                 pachydermVersion,
 				LogLevel:                logLevel,
 				Metrics:                 metrics,
 				PachdCPURequest:         pachdCPURequest,
@@ -541,6 +542,7 @@ particular backend, run "pachctl deploy storage <backend>"`,
 	deploy.PersistentFlags().StringVar(&registry, "registry", "", "The registry to pull images from.")
 	deploy.PersistentFlags().StringVar(&imagePullSecret, "image-pull-secret", "", "A secret in Kubernetes that's needed to pull from your private registry.")
 	deploy.PersistentFlags().StringVar(&dashImage, "dash-image", "", "Image URL for pachyderm dashboard")
+	deploy.PersistentFlags().StringVar(&pachydermVersion, "pachyderm-version", version.PrettyPrintVersion(version.Version), "Version of core pachyderm components to use.")
 	deploy.PersistentFlags().BoolVar(&noGuaranteed, "no-guaranteed", false, "Don't use guaranteed QoS for etcd and pachd deployments. Turning this on (turning guaranteed QoS off) can lead to more stable local clusters (such as a on Minikube), it should normally be used for production clusters.")
 	deploy.PersistentFlags().BoolVar(&noRBAC, "no-rbac", false, "Don't deploy RBAC roles for Pachyderm. (for k8s versions prior to 1.8)")
 	deploy.PersistentFlags().BoolVar(&localRoles, "local-roles", false, "Use namespace-local roles instead of cluster roles. Ignored if --no-rbac is set.")
